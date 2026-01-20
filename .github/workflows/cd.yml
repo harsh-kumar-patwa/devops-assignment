@@ -1,0 +1,48 @@
+# CD Pipeline for DevOps Demo Application
+# Deploys to Kubernetes (K3s) cluster via self-hosted runner
+
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/devops-demo
+
+jobs:
+  deploy:
+    name: Deploy to Kubernetes
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Update Deployment Image
+        run: |
+          sed -i "s|DOCKERHUB_USERNAME/devops-demo:latest|${{ env.DOCKER_IMAGE }}:latest|g" k8s/deployment.yaml
+          cat k8s/deployment.yaml
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+
+      - name: Verify Deployment
+        run: |
+          kubectl rollout status deployment/devops-demo --timeout=120s
+          kubectl get pods -l app=devops-demo
+          kubectl get service devops-demo-service
+
+      - name: Health Check
+        run: |
+          NODE_PORT=$(kubectl get service devops-demo-service -o jsonpath='{.spec.ports[0].nodePort}')
+          echo "Application exposed on port: $NODE_PORT"
+          sleep 10
+          curl --fail http://localhost:$NODE_PORT/api/health || echo "Health check complete"
